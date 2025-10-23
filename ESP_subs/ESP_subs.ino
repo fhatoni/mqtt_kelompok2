@@ -92,8 +92,8 @@ void callback(char *topic, byte *payload, unsigned int length)
     if (deserializeJson(doc, message))
       return;
 
-    suhu = doc["temperature"];
-    kelembapan = doc["humidity"];
+    suhu = doc["temperatureRtu"];
+    kelembapan = doc["humidityRtu"];
 
     // Tampilkan di LCD
     lcd.clear();
