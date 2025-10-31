@@ -7,16 +7,16 @@
 
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 
-const int oneWireBus = 27;
+const int oneWireBus = 26;
 OneWire oneWire(oneWireBus);
 DallasTemperature sensors(&oneWire);
 
-#define TdsSensorPin 35
+#define TdsSensorPin 34
 #define EEPROM_SIZE 512
 GravityTDS gravityTds;
 float temperature, tdsValue;
 
-#define PhSensorPin 34
+#define PhSensorPin 35
 unsigned long int avgval;
 int buffer_arr[34], temp;
 float ph;
