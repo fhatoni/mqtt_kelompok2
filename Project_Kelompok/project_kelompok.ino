@@ -59,7 +59,7 @@ WebServer server(80); // Objek Web Server di port 80
 const int relayPin = 23; // Pin untuk pompa (Aktif HIGH)
 
 // --- VARIABEL BARU UNTUK OTOMASI ---
-bool autoMode = true;     // Mulai dalam mode otomatis
+bool autoMode = false;     // Mulai dalam mode otomatis
 float ppmMin = 400.0; // Nilai default PPM minimum
 float ppmMax = 600.0; // Nilai default PPM maksimum
 
@@ -246,7 +246,7 @@ void mqtt_callback(char* topic, byte* payload, unsigned int length) {
       
       // --- MODIFIKASI ---
       // Perintah manual menonaktifkan mode otomatis
-      autoMode = false;
+      // autoMode = false;
       Serial.println("Mode Otomatis: OFF (Kontrol Manual Aktif)");
       // --- AKHIR MODIFIKASI ---
       
@@ -257,6 +257,14 @@ void mqtt_callback(char* topic, byte* payload, unsigned int length) {
         Serial.println("MQTT: Mematikan Relay 1 (Pin 23)");
         digitalWrite(relayPin, LOW); // Aktif HIGH
       }
+    }
+
+    if (doc.containsKey("relay_2")) {
+      bool mode_status = doc["relay_2"]; 
+      
+      // --- MODIFIKASI ---
+      // Perintah manual menonaktifkan mode otomatis
+      autoMode = mode_status;
     }
   }
   
@@ -571,6 +579,8 @@ void loop()
         if (tdsValue < ppmMin) {
           Serial.println("TDS di bawah minimum. Menyalakan Pompa.");
           digitalWrite(relayPin, HIGH);
+          delay(1000);
+          digitalWrite(relayPin, LOW);
         } 
         // Jika TDS naik DI ATAS maksimum, matikan pompa
         else if (tdsValue > ppmMax) {
