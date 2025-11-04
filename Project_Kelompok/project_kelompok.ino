@@ -33,11 +33,11 @@
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include "DHT.h"
-#include <WebServer.h>     
-#include <Update.h>      
-#include <ESPmDNS.h>    
+#include <WebServer.h>      
+#include <Update.h>         
+#include <ESPmDNS.h>        
 
-#include "webpages.h"    
+#include "webpages.h"       // Pastikan file ini ada di folder yang sama
 
 // --- Pengaturan WiFi ---
 const char* WIFI_SSID = "ThinkpadP50";
@@ -49,7 +49,7 @@ const char* MQTT_BROKER = "broker.emqx.io";
 const int MQTT_PORT = 1883;
 const char* MQTT_TOPIC_SENSORS = "hydro/sensors";
 const char* MQTT_TOPIC_RELAY = "hydro/relay";
-const char* MQTT_TOPIC_TDS = "hydro/tds"; // <-- TOPIK DIGANTI
+const char* MQTT_TOPIC_TDS = "hydro/tds"; 
 
 WiFiClient espClient;
 PubSubClient mqtt(espClient);
@@ -59,9 +59,15 @@ WebServer server(80); // Objek Web Server di port 80
 const int relayPin = 23; // Pin untuk pompa (Aktif HIGH)
 
 // --- VARIABEL BARU UNTUK OTOMASI ---
-bool autoMode = false;     // Mulai dalam mode otomatis
+bool autoMode = false;     // Mulai dalam mode MANUAL (false)
 float ppmMin = 400.0; // Nilai default PPM minimum
 float ppmMax = 600.0; // Nilai default PPM maksimum
+
+// --- VARIABEL BARU UNTUK DOSING (NON-BLOCKING) ---
+bool isDosing = false; // Flag apakah kita sedang dalam proses dosis
+unsigned long doseStartTime = 0; // Waktu kapan dosis dimulai
+const long doseDuration = 1000; // Durasi dosis (1000ms = 1 detik)
+
 
 // --- Pengaturan LCD ---
 LiquidCrystal_I2C lcd(0x27, 16, 2);
@@ -105,8 +111,6 @@ bool isOtaAuthenticated = false; // <-- VARIABEL BARU UNTUK STATUS LOGIN
 
 // --- Halaman Web OTA Login & Update ---
 // --- KODE HTML SEKARANG DIPINDAHKAN KE "webpages.h" ---
-// Anda harus membuat file "webpages.h" di folder yang sama
-// dan memasukkan variabel PAGE_Login dan PAGE_Update ke dalamnya.
 
 
 // Fungsi kustom untuk menampilkan ke LCD
@@ -241,35 +245,32 @@ void mqtt_callback(char* topic, byte* payload, unsigned int length) {
       return;
     }
 
+    // --- MODIFIKASI 1: Logika Relay 1 (Kontrol Pompa Manual) ---
     if (doc.containsKey("relay_1")) {
       bool relay1_status = doc["relay_1"]; 
       
-      // --- MODIFIKASI ---
-      // Perintah manual menonaktifkan mode otomatis
-      // autoMode = false;
+      // Aksi manual (relay_1) HARUS mematikan mode otomatis
+      autoMode = false; // <-- PERBAIKAN: DIKEMBALIKAN (UNCOMMENT)
       Serial.println("Mode Otomatis: OFF (Kontrol Manual Aktif)");
-      // --- AKHIR MODIFIKASI ---
       
       if (relay1_status == true) {
         Serial.println("MQTT: Menyalakan Relay 1 (Pin 23)");
-        digitalWrite(relayPin, HIGH); // Aktif HIGH
+        digitalWrite(relayPin, HIGH); 
       } else {
         Serial.println("MQTT: Mematikan Relay 1 (Pin 23)");
-        digitalWrite(relayPin, LOW); // Aktif HIGH
+        digitalWrite(relayPin, LOW); 
       }
     }
 
+    // --- Logika Relay 2 (Penggantian Mode) ---
+    // Ini adalah cara yang BENAR untuk mengganti mode dari dashboard
     if (doc.containsKey("relay_2")) {
-      bool mode_status = doc["relay_2"]; 
-      
-      // --- MODIFIKASI ---
-      // Perintah manual menonaktifkan mode otomatis
-      autoMode = mode_status;
+      autoMode = doc["relay_2"]; // Menerima true atau false
+      Serial.print("Mode diubah via relay_2. autoMode: "); Serial.println(autoMode);
     }
   }
   
-  // --- BLOK DIMODIFIKASI ---
-  // Proses jika topic adalah hydro/tds (KONTROL OTOMATIS)
+  // --- BLOK DIMODIFIKASI 2: Logika hydro/tds (Pengaturan Threshold) ---
   else if (strcmp(topic, MQTT_TOPIC_TDS) == 0) {
     StaticJsonDocument<128> doc;
     DeserializationError error = deserializeJson(doc, payloadBuffer);
@@ -280,8 +281,6 @@ void mqtt_callback(char* topic, byte* payload, unsigned int length) {
       return;
     }
 
-    // Ambil nilai "min" dan "max" jika ada
-    // Gunakan nilai lama (atau default) jika key tidak ada
     if (doc.containsKey("min")) {
       ppmMin = doc["min"];
     }
@@ -289,17 +288,17 @@ void mqtt_callback(char* topic, byte* payload, unsigned int length) {
       ppmMax = doc["max"];
     }
 
-    // Menerima pesan di topic ini otomatis mengaktifkan autoMode
-    autoMode = true; 
+    // autoMode = true; // <-- INI ADALAH BUG-NYA. DIHAPUS.
+    // Mengirim threshold seharusnya TIDAK mengubah mode operasi.
 
     Serial.println("--- Pengaturan TDS Otomatis Diterima ---");
-    Serial.println("Mode Otomatis: ON");
     Serial.print("PPM Min: "); Serial.println(ppmMin);
     Serial.print("PPM Max: "); Serial.println(ppmMax);
     Serial.println("---------------------------------");
   }
   // --- AKHIR BLOK MODIFIKASI ---
 }
+
 
 // Fungsi untuk koneksi ulang MQTT
 void reconnect_mqtt() {
@@ -323,12 +322,10 @@ void reconnect_mqtt() {
       Serial.print("Subscribe ke: ");
       Serial.println(MQTT_TOPIC_RELAY);
       
-      // --- MODIFIKASI ---
       // Subscribe ke topic TDS BARU
       mqtt.subscribe(MQTT_TOPIC_TDS);
       Serial.print("Subscribe ke: ");
       Serial.println(MQTT_TOPIC_TDS);
-      // --- AKHIR MODIFIKASI ---
       
     } else {
       Serial.print("gagal, rc=");
@@ -553,6 +550,20 @@ void loop()
     // Dapatkan waktu saat ini
     unsigned long now = millis();
 
+    // --- LOGIKA BARU: Timer Dosis Non-Blocking ---
+    // Cek ini di setiap putaran loop
+    // Jika kita sedang dalam proses dosing (isDosing = true)...
+    if (isDosing) {
+      // ...dan durasi 1 detik sudah berlalu...
+      if (now - doseStartTime > doseDuration) {
+        Serial.println("Dosis 1 detik selesai. Mematikan Pompa.");
+        digitalWrite(relayPin, LOW); // Matikan pompa
+        isDosing = false;            // Setel ulang flag (INI YANG TERPOTONG)
+      }
+    }
+    // --- AKHIR LOGIKA BARU ---
+
+
     // --- Timer 1: Baca Sensor (DS18B20, TDS, DHT) ---
     if (now - lastSensorRead > sensorReadInterval) {
       lastSensorRead = now;
@@ -562,7 +573,7 @@ void loop()
       tdsSensor(); // <-- tdsValue diperbarui di sini
       dhtSensor();
 
-      // --- LOGIKA OTOMASI BARU ---
+      // --- LOGIKA OTOMASI (SEKARANG MENGGUNAKAN DOSING) ---
       if (autoMode) {
         Serial.print("Mode Otomatis AKTIF. Cek TDS: ");
         Serial.print(tdsValue);
@@ -572,26 +583,31 @@ void loop()
         Serial.print(ppmMax);
         Serial.println(")");
 
-        // Logika Hysteresis (Deadband)
-        // Pompa (relayPin) diasumsikan MENAMBAH PPM (nutrisi)
+        // Logika Dosing (Bukan Hysteresis)
 
-        // Jika TDS jatuh DI BAWAH minimum, nyalakan pompa
+        // Jika TDS jatuh DI BAWAH minimum
         if (tdsValue < ppmMin) {
-          Serial.println("TDS di bawah minimum. Menyalakan Pompa.");
-          digitalWrite(relayPin, HIGH);
-          delay(1000);
-          digitalWrite(relayPin, LOW);
+          // DAN kita tidak sedang dalam proses dosing
+          if (!isDosing) {
+            Serial.println("TDS di bawah minimum. Memulai dosis 1 detik.");
+            isDosing = true;             // 1. Setel flag
+            doseStartTime = now;         // 2. Mulai 'stopwatch'
+            digitalWrite(relayPin, HIGH); // 3. Nyalakan Pompa
+            // Kita TIDAK mematikannya di sini. Timer di atas yang akan mematikan.
+          } else {
+            Serial.println("TDS masih rendah, TAPI sedang menunggu dosis selesai.");
+          }
         } 
-        // Jika TDS naik DI ATAS maksimum, matikan pompa
+        // Jika TDS naik DI ATAS maksimum
         else if (tdsValue > ppmMax) {
           Serial.println("TDS di atas maksimum. Mematikan Pompa.");
-          digitalWrite(relayPin, LOW);
+          digitalWrite(relayPin, LOW); // Matikan pompa
+          isDosing = false; // Batalkan juga jika ada dosis yang sedang berjalan
         }
-        // Jika TDS berada DI ANTARA min dan max, JANGAN LAKUKAN APA-APA.
-        // Biarkan pompa dalam status terakhirnya (jika sedang ON, biarkan ON
-        // sampai mencapai max. Jika sedang OFF, biarkan OFF sampai jatuh di bawah min)
+        // Jika TDS berada DI ANTARA min dan max
         else {
-          Serial.println("TDS dalam rentang. Tidak ada perubahan status pompa.");
+          Serial.println("TDS dalam rentang. Tidak ada perubahan.");
+          // Biarkan timer dosis (jika aktif) menyelesaikan tugasnya.
         }
       }
       // --- AKHIR LOGIKA OTOMASI ---
