@@ -40,16 +40,16 @@
 #include "webpages.h"       // Pastikan file ini ada di folder yang sama
 
 // --- Pengaturan WiFi ---
-const char* WIFI_SSID = "ThinkpadP50";
-const char* WIFI_PASSWORD = "thinkpad";
+const char* WIFI_SSID = "SSID";
+const char* WIFI_PASSWORD = "PASSWORD";
 const char* host = "hydromonitor"; // Nama mDNS (akses di http://hydromonitor.local)
 
 // --- Pengaturan MQTT ---
-const char* MQTT_BROKER = "broker.emqx.io";
-const int MQTT_PORT = 1883;
-const char* MQTT_TOPIC_SENSORS = "hydro/sensors";
-const char* MQTT_TOPIC_RELAY = "hydro/relay";
-const char* MQTT_TOPIC_TDS = "hydro/tds"; 
+const char* MQTT_BROKER = "BROKER MQTT";
+const int MQTT_PORT = "PORT";
+const char* MQTT_TOPIC_SENSORS = "TOPIC";
+const char* MQTT_TOPIC_RELAY = "TOPIC";
+const char* MQTT_TOPIC_TDS = "TOPIC"; 
 
 WiFiClient espClient;
 PubSubClient mqtt(espClient);
